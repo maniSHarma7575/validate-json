@@ -1,6 +1,10 @@
 package jsonparser
 
-import "errors"
+import (
+	"errors"
+	"strconv"
+	"unicode"
+)
 
 // Whitespace constant are declared here
 const (
@@ -41,8 +45,61 @@ func (v *jsonValidator) parseComma() {
 	v.cursor++
 }
 
-func (v *jsonValidator) parseString() {
+/*
+string = quotation-mark *char quotation-mark
 
+char = unescaped /
+
+	escape (
+		%x22 /           ; " quotation mark U+0022
+		%x5C /           ; \ reverse solidus U+005C
+		%x2F /           ; / solidus U+002F
+		%x62 /           ; b backspace U+0008
+		%x66 /           ; f form feed U+000C
+		%x6E /           ; n line feed U+000A
+		%x72 /           ; r carriage return U+000D
+		%x74 /           ; t tab U+0009
+		%x75 /           ; uXXXX U+XXXX
+	)
+
+escape = %x5C            ; \
+
+quotation-mark = %x22    ; "
+
+unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
+*/
+
+func (v *jsonValidator) parseString() {
+	if v.input[v.cursor] == '"' {
+		v.cursor++
+		v.skipWhiteSpace()
+		for v.input[v.cursor] != '"' {
+			if v.input[v.cursor] == '\\' {
+				char := v.input[v.cursor+1]
+				if contains([]byte{'"', '\\', '/', 'b', 'f', 'n', 'r', 't'}, char) {
+					v.cursor++
+				} else if char == 'u' {
+					if isHexadecimalDigit(rune(v.input[v.cursor+2])) && isHexadecimalDigit(rune(v.input[v.cursor+3])) && isHexadecimalDigit(rune(v.input[v.cursor+4])) && isHexadecimalDigit(rune(v.input[v.cursor+5])) {
+						v.cursor += 5
+					}
+				} else {
+					return nil, errors.New("invalid json: Illegal backslash escape sequence")
+				}
+			} else {
+				if v.input[v.cursor] == '\t' || v.input[v.cursor] == '\n' {
+					return nil, errors.New("invalid json: Illegal character tab character or new line character")
+				}
+			}
+			v.cursor++
+		}
+		v.cursor++
+		return true, nil
+	}
+	return nil, nil
+}
+
+func isHexadecimalDigit(char rune) bool {
+	return isDigit(byte(char)) || ('a' <= char && char <= 'f') || ('A' <= char && char <= 'F')
 }
 
 // Object Grammar
@@ -84,8 +141,69 @@ func (v *jsonValidator) parseObject() (bool, error) {
 	return nil, nil
 }
 
-func (v *jsonValidator) parseNumber() {
+/*
+	number = [ minus ] int [ frac ] [ exp ]
+	decimal-point = %x2E ; .
+	digit1-9 = %x31-39   ; 1-9
+	e = %x65 / %x45      ; e E
+	exp = e [ minus / plus ] 1*DIGIT
+	frac = decimal-point 1*DIGIT
+	int = zero / (digit1-9 *DIGIT)
+	minus = %x2D         ; -
+	plus = %x2B          ; +
+	zero = %x30          ; 0
+*/
 
+func isDigit(char byte) bool {
+	return unicode.IsDigit(rune(char))
+}
+
+func (v *jsonValidator) parseNumber() (bool, nil) {
+	start := v.cursor
+
+	if v.input[v.cursor] == '-' {
+		v.cursor++
+	}
+
+	if v.input[v.cursor] == '0' {
+		v.cursor++
+	}
+
+	if isDigit(v.input[v.cursor]) {
+		v.cursor++
+		for isDigit(v.input[v.cursor]) {
+			v.cursor++
+		}
+	}
+
+	if v.input[v.cursor] == '.' {
+		v.cursor++
+		for isDigit(v.input[v.cursor]) {
+			v.cursor++
+		}
+	}
+
+	if v.input[v.cursor] == 'e' || v.input[v.cursor] == 'E' {
+		v.cursor++
+		if v.input[v.cursor] == '-' || v.input[v.cursor] == '+' {
+			v.cursor++
+			for isDigit(v.input[v.cursor]) {
+				v.cursor++
+			}
+		}
+	}
+
+	if v.cursor > start {
+		_number, err := strconv.ParseFloat(v.input[start:v.cursor], 64)
+
+		if err != nil {
+			return nil, err
+		}
+
+		return true, nil
+	}
+
+	return nil, nil
 }
 
 //array = begin-array [ value *( value-seprator value ) ] end-array
@@ -152,15 +270,15 @@ func (v *jsonValidator) parseValue() {
 	result, err := v.parseObject()
 
 	if result == nil {
-		result = v.parseArray()
+		result, err = v.parseArray()
 	}
 
 	if result == nil {
-		result = v.parseNumber()
+		result, err = v.parseNumber()
 	}
 
 	if result == nil {
-		result = v.parseString()
+		result, err = v.parseString()
 	}
 
 	if result == nil {
