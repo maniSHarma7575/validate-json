@@ -19,10 +19,6 @@ type jsonValidator struct {
 	cursor int
 }
 
-type nilableBool struct {
-	value bool
-}
-
 var whitespaces = []byte{space, horizontalTab, newLine, carriageReturn}
 
 func (v *jsonValidator) skipWhiteSpace() {
@@ -69,7 +65,7 @@ quotation-mark = %x22    ; "
 unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
 */
 
-func (v *jsonValidator) parseString() {
+func (v *jsonValidator) parseString() (bool, error) {
 	if v.input[v.cursor] == '"' {
 		v.cursor++
 		v.skipWhiteSpace()
@@ -83,11 +79,11 @@ func (v *jsonValidator) parseString() {
 						v.cursor += 5
 					}
 				} else {
-					return nil, errors.New("invalid json: Illegal backslash escape sequence")
+					return false, errors.New("invalid json: Illegal backslash escape sequence")
 				}
 			} else {
 				if v.input[v.cursor] == '\t' || v.input[v.cursor] == '\n' {
-					return nil, errors.New("invalid json: Illegal character tab character or new line character")
+					return false, errors.New("invalid json: Illegal character tab character or new line character")
 				}
 			}
 			v.cursor++
@@ -95,7 +91,7 @@ func (v *jsonValidator) parseString() {
 		v.cursor++
 		return true, nil
 	}
-	return nil, nil
+	return false, nil
 }
 
 func isHexadecimalDigit(char rune) bool {
@@ -120,7 +116,11 @@ func (v *jsonValidator) parseObject() (bool, error) {
 				v.skipWhiteSpace()
 			}
 
-			v.parseString()
+			result, err := v.parseString()
+			if err != nil {
+				return result, err
+			}
+
 			v.skipWhiteSpace()
 			v.parseColon()
 			v.skipWhiteSpace()
@@ -138,7 +138,7 @@ func (v *jsonValidator) parseObject() (bool, error) {
 		return true, nil
 	}
 
-	return nil, nil
+	return false, nil
 }
 
 /*
@@ -158,7 +158,7 @@ func isDigit(char byte) bool {
 	return unicode.IsDigit(rune(char))
 }
 
-func (v *jsonValidator) parseNumber() (bool, nil) {
+func (v *jsonValidator) parseNumber() (bool, error) {
 	start := v.cursor
 
 	if v.input[v.cursor] == '-' {
@@ -194,26 +194,25 @@ func (v *jsonValidator) parseNumber() (bool, nil) {
 	}
 
 	if v.cursor > start {
-		_number, err := strconv.ParseFloat(v.input[start:v.cursor], 64)
+		_, err := strconv.ParseFloat(v.input[start:v.cursor], 64)
 
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 
 		return true, nil
 	}
 
-	return nil, nil
+	return false, nil
 }
 
 //array = begin-array [ value *( value-seprator value ) ] end-array
 
-func (v *jsonValidator) parseArray() ([]int, error) {
+func (v *jsonValidator) parseArray() (bool, error) {
 	if v.input[v.cursor] == '[' {
 		v.cursor++
 		initial := true
 		v.skipWhiteSpace()
-		result := []int{}
 
 		for v.cursor < len(v.input) && v.input[v.cursor] != ']' {
 			if !initial {
@@ -221,20 +220,23 @@ func (v *jsonValidator) parseArray() ([]int, error) {
 				v.skipWhiteSpace()
 			}
 
-			value, err := v.parseValue()
+			result, err := v.parseValue()
+			if err != nil {
+				return result, err
+			}
+
 			v.skipWhiteSpace()
-			result = append(result, value)
 			initial = false
 		}
 
 		if v.cursor == len(v.input) {
-			return nil, errors.New("closing bracket for the array is missing")
+			return false, errors.New("closing bracket for the array is missing")
 		}
 
 		v.cursor++
-		return result, nil
+		return true, nil
 	}
-	return nil, nil
+	return false, nil
 }
 
 // - Following three literal names:
@@ -242,16 +244,16 @@ func (v *jsonValidator) parseArray() ([]int, error) {
 //   - null
 //   - true
 
-func (v *jsonValidator) parseKeyword(name string, value nilableBool) (nilableBool, error) {
+func (v *jsonValidator) parseKeyword(name string) (bool, error) {
 	if v.input[v.cursor:v.cursor+len(name)] == name {
 		v.cursor += len(name)
-		return value, nil
+		return true, nil
 	}
 
 	if name == "null" {
-		return value, errors.New("invalid json: missing value")
+		return false, errors.New("invalid json: missing value")
 	}
-	return nilableBool{}, nil
+	return false, nil
 }
 
 // A JSON value must be:
@@ -266,31 +268,31 @@ func (v *jsonValidator) parseKeyword(name string, value nilableBool) (nilableBoo
 //   - null
 //   - true
 
-func (v *jsonValidator) parseValue() {
+func (v *jsonValidator) parseValue() (bool, error) {
 	result, err := v.parseObject()
 
-	if result == nil {
+	if !result {
 		result, err = v.parseArray()
 	}
 
-	if result == nil {
+	if !result {
 		result, err = v.parseNumber()
 	}
 
-	if result == nil {
+	if !result {
 		result, err = v.parseString()
 	}
 
-	if result == nil {
-		result, err = v.parseKeyword("true", nilableBool{value: true})
+	if !result {
+		result, err = v.parseKeyword("true")
 	}
 
-	if result == nil {
-		result, err = v.parseKeyword("false", nilableBool{value: false})
+	if !result {
+		result, err = v.parseKeyword("false")
 	}
 
-	if result == nil {
-		result, err = v.parseKeyword("null", nilableBool{})
+	if !result {
+		result, err = v.parseKeyword("null")
 	}
 
 	return result, err
