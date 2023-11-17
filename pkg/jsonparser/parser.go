@@ -27,18 +27,28 @@ func (v *jsonValidator) skipWhiteSpace() {
 	}
 }
 
-func (v *jsonValidator) parseColon() {
+func (v *jsonValidator) parseColon() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	if v.input[v.cursor] != ':' {
-		errors.New("invalid json: Expected ':'")
+		return false, errors.New("invalid json: Expected ':'")
 	}
 	v.cursor++
+	return true, nil
 }
 
-func (v *jsonValidator) parseComma() {
+func (v *jsonValidator) parseComma() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	if v.input[v.cursor] != ',' {
-		errors.New(("invalid json: Expected ','"))
+		return false, errors.New(("invalid json: Expected ','"))
 	}
 	v.cursor++
+	return true, nil
 }
 
 /*
@@ -66,6 +76,10 @@ unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
 */
 
 func (v *jsonValidator) parseString() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	if v.input[v.cursor] == '"' {
 		v.cursor++
 		v.skipWhiteSpace()
@@ -104,6 +118,10 @@ func isHexadecimalDigit(char rune) bool {
 // member = string name-seprator value
 
 func (v *jsonValidator) parseObject() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	if v.input[v.cursor] == '{' {
 		v.cursor++
 		initial := true
@@ -112,19 +130,31 @@ func (v *jsonValidator) parseObject() (bool, error) {
 		for v.cursor < len(v.input) && v.input[v.cursor] != '}' {
 			if !initial {
 				v.skipWhiteSpace()
-				v.parseComma()
+				if result, err := v.parseComma(); err != nil {
+					return result, err
+				}
+
 				v.skipWhiteSpace()
 			}
 
-			result, err := v.parseString()
-			if err != nil {
+			if result, err := v.parseString(); err != nil || !result {
+				if err == nil {
+					return result, errors.New("object key name is not a string")
+				}
 				return result, err
 			}
 
 			v.skipWhiteSpace()
-			v.parseColon()
+			if result, err := v.parseColon(); err != nil {
+				return result, err
+			}
 			v.skipWhiteSpace()
-			v.parseValue()
+			if result, err := v.parseValue(); err != nil || !result {
+				if err == nil {
+					return result, errors.New("object value is not in correct format")
+				}
+				return result, err
+			}
 			v.skipWhiteSpace()
 			initial = false
 		}
@@ -158,7 +188,21 @@ func isDigit(char byte) bool {
 	return unicode.IsDigit(rune(char))
 }
 
+func (v *jsonValidator) isArrayParsed() bool {
+	return v.cursor >= len(v.input)
+}
+
+func isValidFloat(s string) bool {
+	_, err := strconv.ParseFloat(s, 64)
+
+	return err == nil
+}
+
 func (v *jsonValidator) parseNumber() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	start := v.cursor
 
 	if v.input[v.cursor] == '-' {
@@ -166,6 +210,9 @@ func (v *jsonValidator) parseNumber() (bool, error) {
 	}
 
 	if v.input[v.cursor] == '0' {
+		if v.cursor < len(v.input) && isDigit(v.input[v.cursor+1]) {
+			return false, errors.New("number cannot have leading zeros")
+		}
 		v.cursor++
 	}
 
@@ -187,17 +234,16 @@ func (v *jsonValidator) parseNumber() (bool, error) {
 		v.cursor++
 		if v.input[v.cursor] == '-' || v.input[v.cursor] == '+' {
 			v.cursor++
-			for isDigit(v.input[v.cursor]) {
-				v.cursor++
-			}
+		}
+		for isDigit(v.input[v.cursor]) {
+			v.cursor++
 		}
 	}
 
 	if v.cursor > start {
-		_, err := strconv.ParseFloat(v.input[start:v.cursor], 64)
-
-		if err != nil {
-			return false, err
+		result := isValidFloat(v.input[start:v.cursor])
+		if !result {
+			return false, errors.New("not a valid number")
 		}
 
 		return true, nil
@@ -209,6 +255,10 @@ func (v *jsonValidator) parseNumber() (bool, error) {
 //array = begin-array [ value *( value-seprator value ) ] end-array
 
 func (v *jsonValidator) parseArray() (bool, error) {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
 	if v.input[v.cursor] == '[' {
 		v.cursor++
 		initial := true
@@ -216,12 +266,16 @@ func (v *jsonValidator) parseArray() (bool, error) {
 
 		for v.cursor < len(v.input) && v.input[v.cursor] != ']' {
 			if !initial {
-				v.parseComma()
+				if result, err := v.parseComma(); err != nil {
+					return result, err
+				}
 				v.skipWhiteSpace()
 			}
 
-			result, err := v.parseValue()
-			if err != nil {
+			if result, err := v.parseValue(); err != nil || !result {
+				if err == nil {
+					return result, errors.New("array value is not correct")
+				}
 				return result, err
 			}
 
@@ -245,14 +299,15 @@ func (v *jsonValidator) parseArray() (bool, error) {
 //   - true
 
 func (v *jsonValidator) parseKeyword(name string) (bool, error) {
-	if v.input[v.cursor:v.cursor+len(name)] == name {
+	if v.isArrayParsed() {
+		return false, nil
+	}
+
+	if v.cursor+len(name) < len(v.input) && v.input[v.cursor:v.cursor+len(name)] == name {
 		v.cursor += len(name)
 		return true, nil
 	}
 
-	if name == "null" {
-		return false, errors.New("invalid json: missing value")
-	}
 	return false, nil
 }
 
@@ -271,24 +326,48 @@ func (v *jsonValidator) parseKeyword(name string) (bool, error) {
 func (v *jsonValidator) parseValue() (bool, error) {
 	result, err := v.parseObject()
 
+	if err != nil {
+		return false, err
+	}
+
 	if !result {
 		result, err = v.parseArray()
+	}
+
+	if err != nil {
+		return false, err
 	}
 
 	if !result {
 		result, err = v.parseNumber()
 	}
 
+	if err != nil {
+		return false, err
+	}
+
 	if !result {
 		result, err = v.parseString()
+	}
+
+	if err != nil {
+		return false, err
 	}
 
 	if !result {
 		result, err = v.parseKeyword("true")
 	}
 
+	if err != nil {
+		return false, err
+	}
+
 	if !result {
 		result, err = v.parseKeyword("false")
+	}
+
+	if err != nil {
+		return false, err
 	}
 
 	if !result {
@@ -296,17 +375,6 @@ func (v *jsonValidator) parseValue() (bool, error) {
 	}
 
 	return result, err
-}
-
-func (v *jsonValidator) ParseJson() (bool, error) {
-	v.skipWhiteSpace()
-
-	if contains([]byte{'[', '{'}, v.input[v.cursor]) {
-		result, err := v.parseValue()
-		return result, err
-	} else {
-		return false, errors.New("a json payload should be an object or array")
-	}
 }
 
 func contains(array []byte, value byte) bool {
@@ -322,5 +390,25 @@ func NewJSONValidator(input string) *jsonValidator {
 	return &jsonValidator{
 		input:  input,
 		cursor: 0,
+	}
+}
+
+func (v *jsonValidator) ParseJson() (bool, error) {
+	v.skipWhiteSpace()
+
+	if contains([]byte{'[', '{'}, v.input[v.cursor]) {
+		result, err := v.parseValue()
+
+		if err != nil {
+			return false, err
+		}
+
+		v.skipWhiteSpace()
+		if v.cursor < len(v.input) {
+			return false, errors.New("invalid json: extra character after closing bracket")
+		}
+		return result, err
+	} else {
+		return false, errors.New("a json payload should be an object or array")
 	}
 }
