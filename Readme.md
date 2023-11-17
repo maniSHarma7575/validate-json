@@ -1,6 +1,44 @@
-### validate-json
+# validate-json Tool
 
-validate-json is a tool to validate if the json provided in a file is a valid json.
+The validate-json is a go-based tool to validate if the json provided in a file is a valid json.
+
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Usage](#usage)
+- [Description](#description)
+- [Contributing](#contributing)
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/maniSHarma7575/validate-json
+
+# Change directory
+cd validate-json/cmd/jsonparser
+
+# Build
+go build
+
+# Run Tests
+
+cd validate-json/test/jsonparser
+go test
+
+# Add as linux command
+
+ln -s validate-json/cmd/jsonparser/main /usr/local/bin/validatejson
+```
+
+## Usage
+
+You can use validatejson utility by running command in your terminal:
+
+`validatejson -file [file]`
+
+### Description
 
 #### What is JSON?
 
@@ -130,10 +168,18 @@ quotation-mark = %x22    ; "
 unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
 ```
 
+## Contributing
 
+Thank you for your interest in contributing to our project! We welcome your suggestions, improvements, or contributions. To get started, follow these steps:
 
+### 1. Fork the Project
 
+Click the "Fork" button on the top-right corner of this repository to create your own copy of the project.
 
+### 2. Create a New Branch
 
+Once you've forked the project, it's a good practice to create a new branch for your changes. This keeps your changes isolated and makes it easier to manage multiple contributions.
 
-
+```bash
+git checkout -b your-new-branch
+```
